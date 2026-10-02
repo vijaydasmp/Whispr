@@ -22,10 +22,8 @@ import {
 export default function LoginPage() {
   const router = useRouter();
   const { session, onLoginComplete, onStatusUpdate, setSdk, setAuthKeyWif } = useSession();
-  const [loginMode, setLoginMode] = useState<'key' | 'mnemonic'>('key');
   const [username, setUsername] = useState('');
   const [privateKey, setPrivateKey] = useState('');
-  const [mnemonic, setMnemonic] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -59,36 +57,7 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleMnemonicLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-
-    try {
-      onStatusUpdate('connecting', { fundingAddress: 'deriving...' });
-      const sdk = await createPlatformClient();
-      setSdk(sdk);
-
-      // For MVP, just use the first 12 words as the "passphrase"
-      // In production, this would decrypt an encrypted wallet
-      const words = mnemonic.trim().split(/\s+/).slice(0, 12).join(' ');
-      
-      // Store placeholder wallet (in production this would be encrypted)
-      storeWallet(JSON.stringify({ encrypted: false, words }));
-      
-      // For now, redirect to forums - full mnemonic flow would need identity resolution
-      onLoginComplete('mnemonic-user', 'Wallet User');
-      router.push('/forums');
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Login failed';
-      setError(msg);
-      onStatusUpdate('error', { errorMessage: msg });
-    } finally {
-      setLoading(false);
-    }
-  };
+  };;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -188,13 +157,6 @@ export default function LoginPage() {
                   </label>
                   <textarea
                     value={mnemonic}
-                    onChange={(e) => setMnemonic(e.target.value)}
-                    placeholder="Enter your 12-word recovery phrase"
-                    rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dash-blue focus:border-transparent resize-none"
-                    required
-                  />
-                </div>
                 <button
                   type="submit"
                   disabled={loading}

@@ -131,7 +131,7 @@ export default function ForumPage() {
     try {
       const revision = typeof (membership as unknown as { $revision?: bigint }).$revision === 'bigint'
         ? (membership as unknown as { $revision: bigint }).$revision
-        : 1n;
+        : BigInt(1);
       await leaveForum(sdk, contractId, session.identityId, authKeyWif, membership.$id, revision);
       setMembership(null);
       setMemberCount((c) => Math.max(0, c - 1));

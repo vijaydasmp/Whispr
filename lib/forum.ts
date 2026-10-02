@@ -204,7 +204,7 @@ export async function leaveForum(
     dataContractId: contractId,
     ownerId: identityId,
     id: membershipId,
-    revision: currentRevision + 1n,
+    revision: currentRevision + BigInt(1),
   });
 
   await sdk.documents.replace({ document, identityKey, signer });

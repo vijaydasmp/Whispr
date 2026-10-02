@@ -104,7 +104,7 @@ export async function publishWhisperContract(
   onLog?.('Building the Whispr data contract…');
   const dataContract = new mod.DataContract({
     ownerId: identityId,
-    identityNonce: (identityNonce ?? 0n) + 1n,
+    identityNonce: (identityNonce ?? BigInt(0)) + BigInt(1),
     schemas: buildWhisperSchemas(),
     fullValidation: true,
   });
