@@ -26,11 +26,11 @@ export const WHISPER_CONTRACT_DEFINITION = {
       indices: [
         {
           name: 'ownerForum',
-          properties: [{ $ownerId: 'asc' }, { $createdAt: 'desc' }],
+          properties: [{ $ownerId: 'asc' }, { $createdAt: 'asc' }],
         },
         {
           name: 'byCreatedAt',
-          properties: [{ $createdAt: 'desc' }],
+          properties: [{ $createdAt: 'asc' }],
         },
       ],
       properties: {
@@ -50,7 +50,6 @@ export const WHISPER_CONTRACT_DEFINITION = {
         status: {
           type: 'string' as const,
           enum: ['active', 'archived'],
-          default: 'active',
           description: 'Forum status',
           position: 2,
         },
@@ -90,7 +89,6 @@ export const WHISPER_CONTRACT_DEFINITION = {
         status: {
           type: 'string' as const,
           enum: ['active', 'left'],
-          default: 'active',
           description: 'Membership status',
           position: 2,
         },
@@ -104,11 +102,11 @@ export const WHISPER_CONTRACT_DEFINITION = {
       indices: [
         {
           name: 'byForum',
-          properties: [{ forumId: 'asc' }, { $createdAt: 'desc' }],
+          properties: [{ forumId: 'asc' }, { $createdAt: 'asc' }],
         },
         {
           name: 'ownerPost',
-          properties: [{ $ownerId: 'asc' }, { $createdAt: 'desc' }],
+          properties: [{ $ownerId: 'asc' }, { $createdAt: 'asc' }],
         },
       ],
       properties: {
@@ -129,7 +127,6 @@ export const WHISPER_CONTRACT_DEFINITION = {
         status: {
           type: 'string' as const,
           enum: ['active', 'hidden', 'deleted'],
-          default: 'active',
           description: 'Post status for moderation',
           position: 2,
         },
@@ -147,7 +144,7 @@ export const WHISPER_CONTRACT_DEFINITION = {
         },
         {
           name: 'ownerComment',
-          properties: [{ $ownerId: 'asc' }, { $createdAt: 'desc' }],
+          properties: [{ $ownerId: 'asc' }, { $createdAt: 'asc' }],
         },
       ],
       properties: {
@@ -175,7 +172,6 @@ export const WHISPER_CONTRACT_DEFINITION = {
         status: {
           type: 'string' as const,
           enum: ['active', 'hidden', 'deleted'],
-          default: 'active',
           description: 'Comment status for moderation',
           position: 3,
         },
@@ -215,7 +211,6 @@ export const WHISPER_CONTRACT_DEFINITION = {
         type: {
           type: 'string' as const,
           enum: ['like'],
-          default: 'like',
           description: 'Reaction type',
           position: 2,
         },
