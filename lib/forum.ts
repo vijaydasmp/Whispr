@@ -527,6 +527,7 @@ export async function removeReaction(
     ownerId: identityId,
     id: reactionId,
     revision: currentRevision,
+    properties: {},
   });
 
   await sdk.documents.delete({ document, identityKey, signer });
