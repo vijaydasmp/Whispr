@@ -111,7 +111,7 @@ export async function registerIdentity(
       identity,
       inputs: [
         {
-          address: addrKm.primaryAddress,
+          address: addrKm.primaryAddress.bech32m,
           amount: IDENTITY_FUNDING_CREDITS,
         },
       ],
