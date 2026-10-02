@@ -30,7 +30,7 @@ interface PostWithDetails extends PostDocument {
 export default function ForumPage() {
   const router = useRouter();
   const params = useParams();
-  const forumId = params.forumId as string;
+  const forumId = decodeURIComponent(params.forumId as string);;
 
   const { session, sdk, authKeyWif } = useSession();
   const [forum, setForum] = useState<ForumDocument | null>(null);
