@@ -56,6 +56,12 @@ export type DashSdk = {
       limit?: number;
     }): Promise<Map<string, PlatformDocument | undefined>>;
 
+    get(
+      contractId: string,
+      documentTypeName: string,
+      documentId: string,
+    ): Promise<unknown>;
+    
     create(opts: {
       document: unknown;
       identityKey: unknown;

@@ -153,18 +153,15 @@ export async function getForum(
   assertClientSide('getForum');
 
   try {
-    const results = await sdk.documents.query({
-      dataContractId: contractId,
-      documentTypeName: DOC_FORUM,
-      where: [['$id', '==', forumId]],
-      limit: 1,
-    });
+    const document = await sdk.documents.get(
+      contractId,
+      DOC_FORUM,
+      forumId,
+    );
 
-    const docs = Array.from(results.values()).filter(Boolean);
+    if (!document) return null;
 
-    if (docs.length === 0) return null;
-
-    return docToObject<ForumDocument>(docs[0]);
+    return docToObject<ForumDocument>(document);
   } catch (err) {
     console.error('Whispr getForum failed:', err);
     throw err;
