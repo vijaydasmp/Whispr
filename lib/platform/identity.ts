@@ -75,7 +75,7 @@ export async function getFundingAddressBalance(
 // ---------------------------------------------------------------------------
 
 /** Credits transferred from the funding address to the new identity. */
-const IDENTITY_FUNDING_CREDITS = 5_000_000n;
+const IDENTITY_FUNDING_CREDITS = BigInt(5_000_000);
 
 /**
  * Registers a new identity on testnet and returns its ID string.
@@ -102,7 +102,7 @@ export async function registerIdentity(
   const randomId = crypto.getRandomValues(new Uint8Array(32));
   const identity = new mod.Identity(new mod.Identifier(randomId));
   for (const key of keyManager.getKeysInCreation()) {
-    identity.addPublicKey(key.toIdentityPublicKey());
+    (key.toIdentityPublicKey());
   }
 
   onLog?.('Submitting identity creation state transition…');
