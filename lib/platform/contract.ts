@@ -55,11 +55,8 @@ export function buildWhisperSchemas(): Record<string, object> {
 // At runtime these ARE the correct IdentityPublicKey / IdentitySigner
 // instances that DocumentCreateOptions.identityKey requires.
 export type SigningContext = {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   mod: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   identityKey: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   signer: any;
 };
 
