@@ -64,13 +64,13 @@ function docToObject<T>(doc: unknown): T {
   if (doc && typeof doc === 'object' && 'toObject' in doc) {
     const object = (doc as { toObject(): Record<string, unknown> }).toObject();
 
-    if (object.$id && typeof object.$id !== 'string') {
-      object.$id = String(object.$id);
-    }
+      const sdkDocument = doc as unknown as {
+        id: { toString(): string };
+        ownerId: { toString(): string };
+      };
 
-    if (object.$ownerId && typeof object.$ownerId !== 'string') {
-      object.$ownerId = String(object.$ownerId);
-    }
+      object.$id = sdkDocument.id.toString();
+      object.$ownerId = sdkDocument.ownerId.toString();
 
     if (object.$dataContractId && typeof object.$dataContractId !== 'string') {
       object.$dataContractId = String(object.$dataContractId);
