@@ -2,12 +2,16 @@
  * lib/forum.ts
  *
  * Forum operations on Dash Platform.
- * Testnet only - NOT for production use.
+ * Uses evo-sdk v4 document API patterns:
+ *   - Read:  sdk.documents.query({ dataContractId, documentTypeName, where, limit })
+ *   - Write: sdk.documents.create({ document: new mod.Document({...}), identityKey, signer })
  *
+ * Testnet only - NOT for production use.
  * Client-side only.
  */
 
-import { assertClientSide } from '@/lib/platform/sdk-module';
+import { assertClientSide, loadSdkModule } from '@/lib/platform/sdk-module';
+import { getSigningContext } from '@/lib/platform/contract';
 import type { DashSdk } from '@/lib/platform/types';
 import {
   DOC_FORUM,
@@ -23,33 +27,44 @@ import {
 } from '@/lib/contracts/whisper-contract';
 
 // ---------------------------------------------------------------------------
-// Helper: generate pseudonym from identity + forum
+// Pseudonym generation
 // ---------------------------------------------------------------------------
 
 /**
  * Generate a pseudonymous display name for a user within a specific forum.
- * Uses a deterministic hash based on identity ID + forum ID.
- * 
- * Format: "Anonymous #XXXX" where XXXX is a hex suffix of the hash.
- * 
- * Note: This provides pseudonymous presentation only. The underlying
- * Platform identity is still visible as the document owner. This should
- * NOT be interpreted as cryptographic anonymity.
+ * Uses a deterministic hash based on identityId + forumId.
+ *
+ * Format: "Anonymous #XXXX"
+ *
+ * NOTE: This is pseudonymous presentation only. The underlying Platform
+ * identity is still stored as the document $ownerId and is publicly visible.
+ * This must NOT be interpreted as cryptographic anonymity.
  */
 export function generatePseudonym(identityId: string, forumId: string): string {
-  // Simple hash combining both IDs
   const combined = identityId + forumId;
   let hash = 0;
   for (let i = 0; i < combined.length; i++) {
     const char = combined.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
+    hash = hash & hash;
   }
-  // Positive hash only
-  hash = Math.abs(hash);
-  // Use last 4 hex digits for uniqueness
-  const suffix = (hash % 0xFFFF).toString(16).toUpperCase().padStart(4, '0');
+  const suffix = (Math.abs(hash) % 0xffff)
+    .toString(16)
+    .toUpperCase()
+    .padStart(4, '0');
   return `Anonymous #${suffix}`;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Map a raw SDK document result to a typed object. */
+function docToObject<T>(doc: unknown): T {
+  if (doc && typeof doc === 'object' && 'toObject' in doc) {
+    return (doc as { toObject(): T }).toObject();
+  }
+  return doc as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -61,44 +76,50 @@ export function generatePseudonym(identityId: string, forumId: string): string {
  */
 export async function createForum(
   sdk: DashSdk,
+  contractId: string,
   identityId: string,
+  authKeyWif: string,
   name: string,
   description: string,
 ): Promise<ForumDocument> {
   assertClientSide('createForum');
-  
-  const doc = await sdk.documents.create(DOC_FORUM, {
-    name,
-    description,
-    status: 'active',
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    properties: { name, description, status: 'active' },
+    documentTypeName: DOC_FORUM,
+    dataContractId: contractId,
+    ownerId: identityId,
   });
 
-  await sdk.documents.publish(DOC_FORUM, doc);
-  
-  return doc.toObject() as ForumDocument;
+  const result = await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<ForumDocument>(result);
 }
 
 /**
- * Get all forums (paginated).
+ * Get all forums (paginated, newest first).
  */
 export async function getForums(
   sdk: DashSdk,
+  contractId: string,
   limit = 20,
-  startAfter?: string,
 ): Promise<ForumDocument[]> {
   assertClientSide('getForums');
-  
-  const opts: Record<string, unknown> = {
-    limit,
-    orderBy: { $createdAt: 'desc' },
-  };
-  
-  if (startAfter) {
-    opts.startAfter = startAfter;
-  }
 
-  const docs = await sdk.documents.get(DOC_FORUM, opts);
-  return (docs ?? []).map((d: unknown) => (d as { toObject: () => ForumDocument }).toObject()) as ForumDocument[];
+  const results = await sdk.documents.query({
+    dataContractId: contractId,
+    documentTypeName: DOC_FORUM,
+    limit,
+    orderBy: [['$createdAt', 'desc']],
+  });
+
+  return Array.from(results.values())
+    .filter(Boolean)
+    .map((d) => docToObject<ForumDocument>(d));
 }
 
 /**
@@ -106,17 +127,20 @@ export async function getForums(
  */
 export async function getForum(
   sdk: DashSdk,
+  contractId: string,
   forumId: string,
 ): Promise<ForumDocument | null> {
   assertClientSide('getForum');
-  
   try {
-    const doc = await sdk.documents.get(DOC_FORUM, {
-      where: [{ $id: forumId }],
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_FORUM,
+      where: [['$id', '==', forumId]],
       limit: 1,
     });
-    if (!doc || doc.length === 0) return null;
-    return (doc[0] as { toObject: () => ForumDocument }).toObject() as ForumDocument;
+    const docs = Array.from(results.values()).filter(Boolean);
+    if (docs.length === 0) return null;
+    return docToObject<ForumDocument>(docs[0]);
   } catch {
     return null;
   }
@@ -127,84 +151,90 @@ export async function getForum(
 // ---------------------------------------------------------------------------
 
 /**
- * Join a forum (create membership document).
+ * Join a forum (create membership document with pseudonym).
  */
 export async function joinForum(
   sdk: DashSdk,
+  contractId: string,
   identityId: string,
+  authKeyWif: string,
   forumId: string,
 ): Promise<MembershipDocument> {
   assertClientSide('joinForum');
-  
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
   const pseudonym = generatePseudonym(identityId, forumId);
-  
-  const doc = await sdk.documents.create(DOC_MEMBERSHIP, {
-    forumId,
-    pseudonym,
-    status: 'active',
+
+  const document = new mod.Document({
+    properties: { forumId, pseudonym, status: 'active' },
+    documentTypeName: DOC_MEMBERSHIP,
+    dataContractId: contractId,
+    ownerId: identityId,
   });
 
-  await sdk.documents.publish(DOC_MEMBERSHIP, doc);
-  
-  return doc.toObject() as MembershipDocument;
+  const result = await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<MembershipDocument>(result);
 }
 
 /**
- * Leave a forum (update membership status).
+ * Leave a forum (update membership status to 'left').
  */
 export async function leaveForum(
   sdk: DashSdk,
+  contractId: string,
+  identityId: string,
+  authKeyWif: string,
   membershipId: string,
+  currentRevision: bigint,
 ): Promise<void> {
   assertClientSide('leaveForum');
-  
-  const doc = await sdk.documents.update(DOC_MEMBERSHIP, membershipId, {
-    status: 'left',
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    properties: { status: 'left' },
+    documentTypeName: DOC_MEMBERSHIP,
+    dataContractId: contractId,
+    ownerId: identityId,
+    id: membershipId,
+    revision: currentRevision + 1n,
   });
-  
-  await sdk.documents.publish(DOC_MEMBERSHIP, doc);
+
+  await sdk.documents.replace({ document, identityKey, signer });
 }
 
 /**
- * Get user's membership for a forum.
+ * Get user's active membership for a forum.
  */
 export async function getMembership(
   sdk: DashSdk,
+  contractId: string,
   identityId: string,
   forumId: string,
 ): Promise<MembershipDocument | null> {
   assertClientSide('getMembership');
-  
-  const docs = await sdk.documents.get(DOC_MEMBERSHIP, {
+
+  const results = await sdk.documents.query({
+    dataContractId: contractId,
+    documentTypeName: DOC_MEMBERSHIP,
     where: [
-      { $ownerId: identityId },
-      { forumId },
-      { status: 'active' },
+      ['$ownerId', '==', identityId],
+      ['forumId', '==', forumId],
+      ['status', '==', 'active'],
     ],
     limit: 1,
   });
-  
-  if (!docs || docs.length === 0) return null;
-  return (docs[0] as { toObject: () => MembershipDocument }).toObject() as MembershipDocument;
-}
 
-/**
- * Get all members of a forum.
- */
-export async function getForumMembers(
-  sdk: DashSdk,
-  forumId: string,
-  limit = 50,
-): Promise<MembershipDocument[]> {
-  assertClientSide('getForumMembers');
-  
-  const docs = await sdk.documents.get(DOC_MEMBERSHIP, {
-    where: [{ forumId }, { status: 'active' }],
-    limit,
-    orderBy: { $createdAt: 'asc' },
-  });
-  
-  return (docs ?? []).map((d: unknown) => (d as { toObject: () => MembershipDocument }).toObject()) as MembershipDocument[];
+  const docs = Array.from(results.values()).filter(Boolean);
+  if (docs.length === 0) return null;
+  return docToObject<MembershipDocument>(docs[0]);
 }
 
 /**
@@ -212,16 +242,37 @@ export async function getForumMembers(
  */
 export async function getMemberCount(
   sdk: DashSdk,
+  contractId: string,
   forumId: string,
 ): Promise<number> {
   assertClientSide('getMemberCount');
-  
-  const docs = await sdk.documents.get(DOC_MEMBERSHIP, {
-    where: [{ forumId }, { status: 'active' }],
-    limit: 0, // Just count, no data needed
-  });
-  
-  return Array.isArray(docs) ? docs.length : 0;
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_MEMBERSHIP,
+      where: [
+        ['forumId', '==', forumId],
+        ['status', '==', 'active'],
+      ],
+      limit: 100,
+    });
+    return Array.from(results.values()).filter(Boolean).length;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Get pseudonym for a user in a forum (from membership doc or generated).
+ */
+export async function getUserPseudonym(
+  sdk: DashSdk,
+  contractId: string,
+  identityId: string,
+  forumId: string,
+): Promise<string> {
+  const membership = await getMembership(sdk, contractId, identityId, forumId);
+  return membership?.pseudonym ?? generatePseudonym(identityId, forumId);
 }
 
 // ---------------------------------------------------------------------------
@@ -233,45 +284,55 @@ export async function getMemberCount(
  */
 export async function createPost(
   sdk: DashSdk,
+  contractId: string,
+  identityId: string,
+  authKeyWif: string,
   forumId: string,
   content: string,
 ): Promise<PostDocument> {
   assertClientSide('createPost');
-  
-  const doc = await sdk.documents.create(DOC_POST, {
-    forumId,
-    content,
-    status: 'active',
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    properties: { forumId, content, status: 'active' },
+    documentTypeName: DOC_POST,
+    dataContractId: contractId,
+    ownerId: identityId,
   });
 
-  await sdk.documents.publish(DOC_POST, doc);
-  
-  return doc.toObject() as PostDocument;
+  const result = await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<PostDocument>(result);
 }
 
 /**
- * Get posts in a forum.
+ * Get posts in a forum (newest first).
  */
 export async function getForumPosts(
   sdk: DashSdk,
+  contractId: string,
   forumId: string,
   limit = 20,
-  startAfter?: string,
 ): Promise<PostDocument[]> {
   assertClientSide('getForumPosts');
-  
-  const opts: Record<string, unknown> = {
-    where: [{ forumId }, { status: 'active' }],
-    limit,
-    orderBy: { $createdAt: 'desc' },
-  };
-  
-  if (startAfter) {
-    opts.startAfter = startAfter;
-  }
 
-  const docs = await sdk.documents.get(DOC_POST, opts);
-  return (docs ?? []).map((d: unknown) => (d as { toObject: () => PostDocument }).toObject()) as PostDocument[];
+  const results = await sdk.documents.query({
+    dataContractId: contractId,
+    documentTypeName: DOC_POST,
+    where: [
+      ['forumId', '==', forumId],
+      ['status', '==', 'active'],
+    ],
+    limit,
+    orderBy: [['$createdAt', 'desc']],
+  });
+
+  return Array.from(results.values())
+    .filter(Boolean)
+    .map((d) => docToObject<PostDocument>(d));
 }
 
 /**
@@ -279,17 +340,20 @@ export async function getForumPosts(
  */
 export async function getPost(
   sdk: DashSdk,
+  contractId: string,
   postId: string,
 ): Promise<PostDocument | null> {
   assertClientSide('getPost');
-  
   try {
-    const docs = await sdk.documents.get(DOC_POST, {
-      where: [{ $id: postId }],
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_POST,
+      where: [['$id', '==', postId]],
       limit: 1,
     });
-    if (!docs || docs.length === 0) return null;
-    return (docs[0] as { toObject: () => PostDocument }).toObject() as PostDocument;
+    const docs = Array.from(results.values()).filter(Boolean);
+    if (docs.length === 0) return null;
+    return docToObject<PostDocument>(docs[0]);
   } catch {
     return null;
   }
@@ -300,16 +364,24 @@ export async function getPost(
  */
 export async function getPostCount(
   sdk: DashSdk,
+  contractId: string,
   forumId: string,
 ): Promise<number> {
   assertClientSide('getPostCount');
-  
-  const docs = await sdk.documents.get(DOC_POST, {
-    where: [{ forumId }, { status: 'active' }],
-    limit: 0,
-  });
-  
-  return Array.isArray(docs) ? docs.length : 0;
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_POST,
+      where: [
+        ['forumId', '==', forumId],
+        ['status', '==', 'active'],
+      ],
+      limit: 100,
+    });
+    return Array.from(results.values()).filter(Boolean).length;
+  } catch {
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -321,41 +393,56 @@ export async function getPostCount(
  */
 export async function createComment(
   sdk: DashSdk,
+  contractId: string,
+  identityId: string,
+  authKeyWif: string,
   postId: string,
   forumId: string,
   content: string,
 ): Promise<CommentDocument> {
   assertClientSide('createComment');
-  
-  const doc = await sdk.documents.create(DOC_COMMENT, {
-    postId,
-    forumId,
-    content,
-    status: 'active',
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    properties: { postId, forumId, content, status: 'active' },
+    documentTypeName: DOC_COMMENT,
+    dataContractId: contractId,
+    ownerId: identityId,
   });
 
-  await sdk.documents.publish(DOC_COMMENT, doc);
-  
-  return doc.toObject() as CommentDocument;
+  const result = await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<CommentDocument>(result);
 }
 
 /**
- * Get comments for a post.
+ * Get comments for a post (oldest first).
  */
 export async function getPostComments(
   sdk: DashSdk,
+  contractId: string,
   postId: string,
   limit = 50,
 ): Promise<CommentDocument[]> {
   assertClientSide('getPostComments');
-  
-  const docs = await sdk.documents.get(DOC_COMMENT, {
-    where: [{ postId }, { status: 'active' }],
+
+  const results = await sdk.documents.query({
+    dataContractId: contractId,
+    documentTypeName: DOC_COMMENT,
+    where: [
+      ['postId', '==', postId],
+      ['status', '==', 'active'],
+    ],
     limit,
-    orderBy: { $createdAt: 'asc' },
+    orderBy: [['$createdAt', 'asc']],
   });
-  
-  return (docs ?? []).map((d: unknown) => (d as { toObject: () => CommentDocument }).toObject()) as CommentDocument[];
+
+  return Array.from(results.values())
+    .filter(Boolean)
+    .map((d) => docToObject<CommentDocument>(d));
 }
 
 /**
@@ -363,16 +450,24 @@ export async function getPostComments(
  */
 export async function getCommentCount(
   sdk: DashSdk,
+  contractId: string,
   postId: string,
 ): Promise<number> {
   assertClientSide('getCommentCount');
-  
-  const docs = await sdk.documents.get(DOC_COMMENT, {
-    where: [{ postId }, { status: 'active' }],
-    limit: 0,
-  });
-  
-  return Array.isArray(docs) ? docs.length : 0;
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_COMMENT,
+      where: [
+        ['postId', '==', postId],
+        ['status', '==', 'active'],
+      ],
+      limit: 100,
+    });
+    return Array.from(results.values()).filter(Boolean).length;
+  } catch {
+    return 0;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -380,70 +475,89 @@ export async function getCommentCount(
 // ---------------------------------------------------------------------------
 
 /**
- * Add a like to a post.
+ * Add a like reaction to a post.
  */
 export async function addReaction(
   sdk: DashSdk,
+  contractId: string,
+  identityId: string,
+  authKeyWif: string,
   postId: string,
   forumId: string,
 ): Promise<ReactionDocument> {
   assertClientSide('addReaction');
-  
-  const doc = await sdk.documents.create(DOC_REACTION, {
-    postId,
-    forumId,
-    type: 'like',
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    properties: { postId, forumId, type: 'like' },
+    documentTypeName: DOC_REACTION,
+    dataContractId: contractId,
+    ownerId: identityId,
   });
 
-  await sdk.documents.publish(DOC_REACTION, doc);
-  
-  return doc.toObject() as ReactionDocument;
+  const result = await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<ReactionDocument>(result);
 }
 
 /**
- * Remove a like from a post.
+ * Remove a like reaction from a post.
  */
 export async function removeReaction(
   sdk: DashSdk,
+  contractId: string,
   identityId: string,
-  postId: string,
+  authKeyWif: string,
+  reactionId: string,
+  currentRevision: bigint,
 ): Promise<void> {
   assertClientSide('removeReaction');
-  
-  const docs = await sdk.documents.get(DOC_REACTION, {
-    where: [
-      { $ownerId: identityId },
-      { postId },
-    ],
-    limit: 1,
+  const { mod, identityKey, signer } = await getSigningContext(
+    sdk,
+    identityId,
+    authKeyWif,
+  );
+
+  const document = new mod.Document({
+    documentTypeName: DOC_REACTION,
+    dataContractId: contractId,
+    ownerId: identityId,
+    id: reactionId,
+    revision: currentRevision,
   });
-  
-  if (docs && docs.length > 0) {
-    const reactionDoc = docs[0] as { getId: () => string };
-    await sdk.documents.delete(DOC_REACTION, reactionDoc.getId());
-  }
+
+  await sdk.documents.delete({ document, identityKey, signer });
 }
 
 /**
- * Get user's reaction on a post.
+ * Get the current user's reaction on a post (or null).
  */
 export async function getUserReaction(
   sdk: DashSdk,
+  contractId: string,
   identityId: string,
   postId: string,
 ): Promise<ReactionDocument | null> {
   assertClientSide('getUserReaction');
-  
-  const docs = await sdk.documents.get(DOC_REACTION, {
-    where: [
-      { $ownerId: identityId },
-      { postId },
-    ],
-    limit: 1,
-  });
-  
-  if (!docs || docs.length === 0) return null;
-  return (docs[0] as { toObject: () => ReactionDocument }).toObject() as ReactionDocument;
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_REACTION,
+      where: [
+        ['$ownerId', '==', identityId],
+        ['postId', '==', postId],
+      ],
+      limit: 1,
+    });
+    const docs = Array.from(results.values()).filter(Boolean);
+    if (docs.length === 0) return null;
+    return docToObject<ReactionDocument>(docs[0]);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -451,55 +565,19 @@ export async function getUserReaction(
  */
 export async function getReactionCount(
   sdk: DashSdk,
+  contractId: string,
   postId: string,
 ): Promise<number> {
   assertClientSide('getReactionCount');
-  
-  const docs = await sdk.documents.get(DOC_REACTION, {
-    where: [{ postId }],
-    limit: 0,
-  });
-  
-  return Array.isArray(docs) ? docs.length : 0;
-}
-
-// ---------------------------------------------------------------------------
-// Pseudonym Resolution
-// ---------------------------------------------------------------------------
-
-/**
- * Get the pseudonym for a user in a forum from their membership.
- * Returns null if user is not a member.
- */
-export async function getUserPseudonym(
-  sdk: DashSdk,
-  identityId: string,
-  forumId: string,
-): Promise<string | null> {
-  const membership = await getMembership(sdk, identityId, forumId);
-  return membership?.pseudonym ?? null;
-}
-
-/**
- * Get pseudonyms for multiple users in a forum.
- * Returns a map of identityId -> pseudonym.
- */
-export async function getPseudonyms(
-  sdk: DashSdk,
-  forumId: string,
-  identityIds: string[],
-): Promise<Map<string, string>> {
-  const pseudonyms = new Map<string, string>();
-  
-  if (identityIds.length === 0) return pseudonyms;
-  
-  const members = await getForumMembers(sdk, forumId, 100);
-  
-  for (const member of members) {
-    if (identityIds.includes(member.$ownerId)) {
-      pseudonyms.set(member.$ownerId, member.pseudonym);
-    }
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_REACTION,
+      where: [['postId', '==', postId]],
+      limit: 100,
+    });
+    return Array.from(results.values()).filter(Boolean).length;
+  } catch {
+    return 0;
   }
-  
-  return pseudonyms;
 }
