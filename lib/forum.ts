@@ -136,19 +136,16 @@ export async function getForum(
   forumId: string,
 ): Promise<ForumDocument | null> {
   assertClientSide('getForum');
-  try {
-    const results = await sdk.documents.query({
-      dataContractId: contractId,
-      documentTypeName: DOC_FORUM,
-      where: [['$id', '==', forumId]],
-      limit: 1,
-    });
-    const docs = Array.from(results.values()).filter(Boolean);
-    if (docs.length === 0) return null;
-    return docToObject<ForumDocument>(docs[0]);
-  } catch {
-    return null;
-  }
+
+  const document = await sdk.documents.get(
+    contractId,
+    DOC_FORUM,
+    forumId,
+  );
+
+  if (!document) return null;
+
+  return docToObject<ForumDocument>(document);
 }
 
 // ---------------------------------------------------------------------------
