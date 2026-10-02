@@ -102,8 +102,8 @@ export async function registerIdentity(
   const randomId = crypto.getRandomValues(new Uint8Array(32));
   const identity = new mod.Identity(new mod.Identifier(randomId));
   for (const key of keyManager.getKeysInCreation()) {
-    (key.toIdentityPublicKey());
-  }
+  identity.addPublicKey(key.toIdentityPublicKey());
+}
 
   onLog?.('Submitting identity creation state transition…');
   try {
@@ -111,7 +111,7 @@ export async function registerIdentity(
       identity,
       inputs: [
         {
-          address: addrKm.primaryAddress.bech32m,
+          address: addrKm.primaryAddress,
           amount: IDENTITY_FUNDING_CREDITS,
         },
       ],
