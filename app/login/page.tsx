@@ -4,7 +4,7 @@
  * app/login/page.tsx
  *
  * Login page for Whispr - Dash Platform testnet identity login.
- * Supports both mnemonic-based and key-based login.
+ * Supports Dash Platform testnet identity login using a private key (WIF).
  */
 
 import { useState } from 'react';
@@ -12,12 +12,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from '@/lib/platform/session-context';
 import { createPlatformClient } from '@/lib/platform/client';
-import { loginWithKey, resolveDpnsName, shortHandle } from '@/lib/platform/identity';
-import {
-  storeKeySessionIdentity,
-  storeTabKey,
-  storeWallet,
-} from '@/lib/platform/wallet-store';
+import { loginWithKey, shortHandle } from '@/lib/platform/identity';
+import { storeKeySessionIdentity, storeTabKey } from '@/lib/platform/wallet-store';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -57,7 +53,8 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
-  };;
+  };
+
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -81,31 +78,6 @@ export default function LoginPage() {
               Connect your Dash Platform testnet identity
             </p>
 
-            {/* Mode Toggle */}
-            <div className="flex mb-6 bg-gray-100 rounded-lg p-1">
-              <button
-                type="button"
-                onClick={() => setLoginMode('key')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-                  loginMode === 'key'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Private Key
-              </button>
-              <button
-                type="button"
-                onClick={() => setLoginMode('mnemonic')}
-                className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors ${
-                  loginMode === 'mnemonic'
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                Recovery Phrase
-              </button>
-            </div>
 
             {error && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -113,59 +85,41 @@ export default function LoginPage() {
               </div>
             )}
 
-            {loginMode === 'key' ? (
-              <form onSubmit={handleKeyLogin} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Username or Identity ID
-                  </label>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="e.g., alice.dash or identityId"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dash-blue focus:border-transparent"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Private Key (WIF)
-                  </label>
-                  <input
-                    type="password"
-                    value={privateKey}
-                    onChange={(e) => setPrivateKey(e.target.value)}
-                    placeholder="Your private key in WIF format"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dash-blue focus:border-transparent"
-                    required
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-dash-blue text-white font-medium rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  {loading ? 'Connecting...' : 'Sign In'}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleMnemonicLogin} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Recovery Phrase (12 words)
-                  </label>
-                  <textarea
-                    value={mnemonic}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-3 bg-dash-blue text-white font-medium rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
-                >
-                  {loading ? 'Connecting...' : 'Unlock Wallet'}
-                </button>
-              </form>
-            )}
+            <form onSubmit={handleKeyLogin} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Username or Identity ID
+                </label>
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g., alice.dash or identityId"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dash-blue focus:border-transparent"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Private Key (WIF)
+                </label>
+                <input
+                  type="password"
+                  value={privateKey}
+                  onChange={(e) => setPrivateKey(e.target.value)}
+                  placeholder="Your private key in WIF format"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-dash-blue focus:border-transparent"
+                  required
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3 bg-dash-blue text-white font-medium rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50"
+              >
+                {loading ? 'Connecting...' : 'Sign In'}
+              </button>
+            </form>
 
             <div className="mt-6 pt-6 border-t border-gray-200">
               <p className="text-xs text-gray-500 text-center">
