@@ -18,7 +18,7 @@ const KEY_CONTRACT_ID = 'whispr:platform:v1:contractid';
  * Set NEXT_PUBLIC_WHISPR_CONTRACT_ID in environment variables after deploying.
  */
 export const KNOWN_CONTRACT_ID =
-  process.env.NEXT_PUBLIC_WHISPR_CONTRACT_ID ?? '5RzTyKPd3dsMhkmJvrPsgM7iSsyF4NHnustqAfVnkyi';
+  process.env.NEXT_PUBLIC_WHISPR_CONTRACT_ID ?? '5RzTyKPkD3dsMhkmJvrPsgM7iSsyF4NHnustqAfVnkyi';
 
 export function getStoredContractId(): string | null {
   assertClientSide('getStoredContractId');
