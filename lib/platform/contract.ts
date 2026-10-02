@@ -57,8 +57,8 @@ export async function getSigningContext(
   wif: string,
 ): Promise<{
   mod: Awaited<ReturnType<typeof loadSdkModule>>;
-  identityKey: unknown;
-  signer: unknown;
+  identityKey: IdentityPublicKey;
+  signer: IdentitySigner;
 }> {
   assertClientSide('getSigningContext');
   const mod = await loadSdkModule();
