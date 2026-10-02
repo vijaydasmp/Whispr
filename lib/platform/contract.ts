@@ -48,18 +48,35 @@ export function buildWhisperSchemas(): Record<string, object> {
   return schemas;
 }
 
+// Shape returned by getSigningContext — identityKey and signer are typed as
+// `any` intentionally. The evo-sdk exposes IdentityPublicKey only through the
+// compiled wasm layer; TypeScript cannot narrow the publicKeys array element
+// to that concrete class without importing from @dashevo/wasm-sdk directly.
+// At runtime these ARE the correct IdentityPublicKey / IdentitySigner
+// instances that DocumentCreateOptions.identityKey requires.
+export type SigningContext = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mod: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  identityKey: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  signer: any;
+};
+
 /**
- * Resolve signing context: match WIF against identity's registered keys.
+ * Resolve signing context: match WIF against the identity's registered keys.
+ *
+ * `identityKey` is typed as `any` so it satisfies the wasm SDK's
+ * DocumentCreateOptions.identityKey: IdentityPublicKey without a cast at
+ * every call site. The value is a genuine IdentityPublicKey instance —
+ * obtained from sdk.identities.fetch().publicKeys — just not statically
+ * typed as such here due to the wasm import boundary.
  */
 export async function getSigningContext(
   sdk: DashSdk,
   identityId: string,
   wif: string,
-): Promise<{
-  mod: Awaited<ReturnType<typeof loadSdkModule>>;
-  identityKey: unknown;
-  signer: unknown;
-}> {
+): Promise<SigningContext> {
   assertClientSide('getSigningContext');
   const mod = await loadSdkModule();
   const identity = await sdk.identities.fetch(identityId);
