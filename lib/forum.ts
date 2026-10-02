@@ -97,8 +97,8 @@ export async function createForum(
   });
 
   try {
-  const result = await sdk.documents.create({ document, identityKey, signer });
-  return docToObject<ForumDocument>(result);
+  await sdk.documents.create({ document, identityKey, signer });
+  return docToObject<ForumDocument>(document);
 } catch (err) {
   console.error('Whispr createForum documents.create failed:', err);
   throw err;
