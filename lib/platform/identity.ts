@@ -10,6 +10,7 @@
  */
 
 import { assertClientSide, loadSdkModule } from '@/lib/platform/sdk-module';
+import { PlatformAddressInput } from '@dashevo/evo-sdk';
 import { NETWORK } from '@/lib/platform/client';
 import {
   AddressKeyManager,
