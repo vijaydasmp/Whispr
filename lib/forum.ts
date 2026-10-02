@@ -96,8 +96,13 @@ export async function createForum(
     ownerId: identityId,
   });
 
+  try {
   const result = await sdk.documents.create({ document, identityKey, signer });
   return docToObject<ForumDocument>(result);
+} catch (err) {
+  console.error('Whispr createForum documents.create failed:', err);
+  throw err;
+}
 }
 
 /**
