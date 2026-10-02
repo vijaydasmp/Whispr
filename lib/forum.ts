@@ -62,10 +62,25 @@ export function generatePseudonym(identityId: string, forumId: string): string {
 /** Map a raw SDK document result to a typed object. */
 function docToObject<T>(doc: unknown): T {
   if (doc && typeof doc === 'object' && 'toObject' in doc) {
-    return (doc as { toObject(): T }).toObject();
+    const object = (doc as { toObject(): Record<string, unknown> }).toObject();
+
+    if (object.$id && typeof object.$id !== 'string') {
+      object.$id = String(object.$id);
+    }
+
+    if (object.$ownerId && typeof object.$ownerId !== 'string') {
+      object.$ownerId = String(object.$ownerId);
+    }
+
+    if (object.$dataContractId && typeof object.$dataContractId !== 'string') {
+      object.$dataContractId = String(object.$dataContractId);
+    }
+
+    return object as T;
   }
+
   return doc as T;
-}
+ }
 
 // ---------------------------------------------------------------------------
 // Forum Operations
