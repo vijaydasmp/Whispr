@@ -8,9 +8,15 @@
  *
  * Testnet only - NOT for production use.
  * Client-side only.
+ *
+ * IMPORTANT (query/index rule):
+ *   Dash Platform rejects any `where` clause whose fields are not covered by a
+ *   document index. The deployed Whispr contract indexes `forumId`/`postId`/
+ *   `$ownerId` but NOT `status`, so we must never filter on `status` in a query.
+ *   Instead we fetch by the indexed field and filter `status` in JavaScript.
  */
 
-import { assertClientSide, loadSdkModule } from '@/lib/platform/sdk-module';
+import { assertClientSide } from '@/lib/platform/sdk-module';
 import { getSigningContext } from '@/lib/platform/contract';
 import type { DashSdk } from '@/lib/platform/types';
 import {
@@ -27,7 +33,7 @@ import {
 } from '@/lib/contracts/whisper-contract';
 
 // ---------------------------------------------------------------------------
-// Pseudonym generation
+// Pseudonym / anonymous handle generation
 // ---------------------------------------------------------------------------
 
 /**
@@ -55,6 +61,34 @@ export function generatePseudonym(identityId: string, forumId: string): string {
   return `Anonymous #${suffix}`;
 }
 
+/**
+ * Generate a random anonymous display handle, e.g. "Anonymous #7F3A".
+ *
+ * Unlike generatePseudonym(), this is NOT derived from the identity, so it
+ * cannot be recomputed by anyone who knows the identity ID + forum ID. The
+ * handle is stored per identity (see wallet-store) and reused, and is written
+ * into the user's membership document so other readers can display it.
+ *
+ * The user still owns every document under their real Platform identity —
+ * this only changes what name is shown.
+ */
+export function generateAnonymousHandle(): string {
+  const suffix = randomHex4();
+  return `Anonymous #${suffix}`;
+}
+
+function randomHex4(): string {
+  const bytes = new Uint8Array(2);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(bytes);
+  } else {
+    bytes[0] = Math.floor(Math.random() * 256);
+    bytes[1] = Math.floor(Math.random() * 256);
+  }
+  const value = (bytes[0] << 8) | bytes[1];
+  return value.toString(16).toUpperCase().padStart(4, '0');
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -64,23 +98,41 @@ function docToObject<T>(doc: unknown): T {
   if (doc && typeof doc === 'object' && 'toObject' in doc) {
     const object = (doc as { toObject(): Record<string, unknown> }).toObject();
 
-      const sdkDocument = doc as unknown as {
-        id: { toString(): string };
-        ownerId: { toString(): string };
-      };
+    const sdkDocument = doc as unknown as {
+      id: { toString(): string };
+      ownerId: { toString(): string };
+    };
 
-      object.$id = sdkDocument.id.toString();
-      object.$ownerId = sdkDocument.ownerId.toString();
+    object.$id = sdkDocument.id.toString();
+    object.$ownerId = sdkDocument.ownerId.toString();
 
     if (object.$dataContractId && typeof object.$dataContractId !== 'string') {
       object.$dataContractId = String(object.$dataContractId);
+    }
+
+    // Dash serialises u64 timestamp fields as BigInt in toObject(). The UI
+    // treats $createdAt/$updatedAt as millisecond numbers (e.g.
+    // `Date.now() - $createdAt`), and mixing BigInt with number throws a
+    // TypeError, so normalise them to Number here.
+    for (const key of ['$createdAt', '$updatedAt'] as const) {
+      const value = object[key];
+      if (typeof value === 'bigint') {
+        object[key] = Number(value);
+      }
     }
 
     return object as T;
   }
 
   return doc as T;
- }
+}
+
+/** Map a raw query result Map to an array of typed objects. */
+function queryToArray<T>(results: Map<string, unknown>): T[] {
+  return Array.from(results.values())
+    .filter(Boolean)
+    .map((d) => docToObject<T>(d));
+}
 
 // ---------------------------------------------------------------------------
 // Forum Operations
@@ -112,16 +164,19 @@ export async function createForum(
   });
 
   try {
-  await sdk.documents.create({ document, identityKey, signer });
-  return docToObject<ForumDocument>(document);
-} catch (err) {
-  console.error('Whispr createForum documents.create failed:', err);
-  throw err;
-}
+    await sdk.documents.create({ document, identityKey, signer });
+    return docToObject<ForumDocument>(document);
+  } catch (err) {
+    console.error('Whispr createForum documents.create failed:', err);
+    throw err;
+  }
 }
 
 /**
  * Get all forums (paginated, newest first).
+ *
+ * Uses the `byCreatedAt` index. `$createdAt` is a reserved index field, so
+ * ordering by it needs no extra `where` clause.
  */
 export async function getForums(
   sdk: DashSdk,
@@ -137,9 +192,7 @@ export async function getForums(
     orderBy: [['$createdAt', 'desc']],
   });
 
-  return Array.from(results.values())
-    .filter(Boolean)
-    .map((d) => docToObject<ForumDocument>(d));
+  return queryToArray<ForumDocument>(results);
 }
 
 /**
@@ -173,7 +226,10 @@ export async function getForum(
 // ---------------------------------------------------------------------------
 
 /**
- * Join a forum (create membership document with pseudonym).
+ * Join a forum (create membership document with a pseudonym).
+ *
+ * `pseudonym` is the anonymous display handle to store on-chain. When omitted
+ * a deterministic pseudonym is used (kept for backwards compatibility).
  */
 export async function joinForum(
   sdk: DashSdk,
@@ -181,6 +237,7 @@ export async function joinForum(
   identityId: string,
   authKeyWif: string,
   forumId: string,
+  pseudonym?: string,
 ): Promise<MembershipDocument> {
   assertClientSide('joinForum');
   const { mod, identityKey, signer } = await getSigningContext(
@@ -189,10 +246,10 @@ export async function joinForum(
     authKeyWif,
   );
 
-  const pseudonym = generatePseudonym(identityId, forumId);
+  const displayName = pseudonym?.trim() || generatePseudonym(identityId, forumId);
 
   const document = new mod.Document({
-    properties: { forumId, pseudonym, status: 'active' },
+    properties: { forumId, pseudonym: displayName, status: 'active' },
     documentTypeName: DOC_MEMBERSHIP,
     dataContractId: contractId,
     ownerId: identityId,
@@ -204,6 +261,9 @@ export async function joinForum(
 
 /**
  * Leave a forum (update membership status to 'left').
+ *
+ * A Dash `replace` overwrites the whole document, so the required fields
+ * (`forumId`, `pseudonym`) must be re-sent alongside the changed `status`.
  */
 export async function leaveForum(
   sdk: DashSdk,
@@ -212,6 +272,8 @@ export async function leaveForum(
   authKeyWif: string,
   membershipId: string,
   currentRevision: bigint,
+  forumId: string,
+  pseudonym: string,
 ): Promise<void> {
   assertClientSide('leaveForum');
   const { mod, identityKey, signer } = await getSigningContext(
@@ -221,7 +283,7 @@ export async function leaveForum(
   );
 
   const document = new mod.Document({
-    properties: { status: 'left' },
+    properties: { forumId, pseudonym, status: 'left' },
     documentTypeName: DOC_MEMBERSHIP,
     dataContractId: contractId,
     ownerId: identityId,
@@ -234,6 +296,9 @@ export async function leaveForum(
 
 /**
  * Get user's active membership for a forum.
+ *
+ * Matches the unique `memberForum` index ($ownerId + forumId) and filters
+ * `status` in JS, because `status` is not indexed.
  */
 export async function getMembership(
   sdk: DashSdk,
@@ -249,14 +314,13 @@ export async function getMembership(
     where: [
       ['$ownerId', '==', identityId],
       ['forumId', '==', forumId],
-      ['status', '==', 'active'],
     ],
     limit: 1,
   });
 
-  const docs = Array.from(results.values()).filter(Boolean);
-  if (docs.length === 0) return null;
-  return docToObject<MembershipDocument>(docs[0]);
+  const docs = queryToArray<MembershipDocument>(results);
+  const active = docs.find((d) => d.status === 'active');
+  return active ?? null;
 }
 
 /**
@@ -272,13 +336,12 @@ export async function getMemberCount(
     const results = await sdk.documents.query({
       dataContractId: contractId,
       documentTypeName: DOC_MEMBERSHIP,
-      where: [
-        ['forumId', '==', forumId],
-        ['status', '==', 'active'],
-      ],
+      where: [['forumId', '==', forumId]],
       limit: 100,
     });
-    return Array.from(results.values()).filter(Boolean).length;
+    return queryToArray<MembershipDocument>(results).filter(
+      (d) => d.status === 'active',
+    ).length;
   } catch {
     return 0;
   }
@@ -295,6 +358,39 @@ export async function getUserPseudonym(
 ): Promise<string> {
   const membership = await getMembership(sdk, contractId, identityId, forumId);
   return membership?.pseudonym ?? generatePseudonym(identityId, forumId);
+}
+
+/**
+ * Resolve a map of author identity ID -> pseudonym for a forum.
+ *
+ * Posts/comments store only the author's `$ownerId`; the chosen anonymous
+ * display name lives in that author's membership document. Fetching the
+ * forum's memberships lets us show everyone's own handle instead of a name
+ * recomputed from their identity.
+ */
+export async function getForumPseudonyms(
+  sdk: DashSdk,
+  contractId: string,
+  forumId: string,
+): Promise<Map<string, string>> {
+  assertClientSide('getForumPseudonyms');
+  const map = new Map<string, string>();
+  try {
+    const results = await sdk.documents.query({
+      dataContractId: contractId,
+      documentTypeName: DOC_MEMBERSHIP,
+      where: [['forumId', '==', forumId]],
+      limit: 100,
+    });
+    for (const membership of queryToArray<MembershipDocument>(results)) {
+      if (membership.status === 'active' && membership.$ownerId) {
+        map.set(membership.$ownerId, membership.pseudonym);
+      }
+    }
+  } catch {
+    // Non-fatal: callers fall back to a generated pseudonym.
+  }
+  return map;
 }
 
 // ---------------------------------------------------------------------------
@@ -332,6 +428,8 @@ export async function createPost(
 
 /**
  * Get posts in a forum (newest first).
+ *
+ * Uses the `byForum` index (forumId, $createdAt) and filters `status` in JS.
  */
 export async function getForumPosts(
   sdk: DashSdk,
@@ -344,17 +442,14 @@ export async function getForumPosts(
   const results = await sdk.documents.query({
     dataContractId: contractId,
     documentTypeName: DOC_POST,
-    where: [
-      ['forumId', '==', forumId],
-      ['status', '==', 'active'],
-    ],
+    where: [['forumId', '==', forumId]],
     limit,
     orderBy: [['$createdAt', 'desc']],
   });
 
-  return Array.from(results.values())
-    .filter(Boolean)
-    .map((d) => docToObject<PostDocument>(d));
+  return queryToArray<PostDocument>(results).filter(
+    (d) => d.status === 'active',
+  );
 }
 
 /**
@@ -367,15 +462,9 @@ export async function getPost(
 ): Promise<PostDocument | null> {
   assertClientSide('getPost');
   try {
-    const results = await sdk.documents.query({
-      dataContractId: contractId,
-      documentTypeName: DOC_POST,
-      where: [['$id', '==', postId]],
-      limit: 1,
-    });
-    const docs = Array.from(results.values()).filter(Boolean);
-    if (docs.length === 0) return null;
-    return docToObject<PostDocument>(docs[0]);
+    const document = await sdk.documents.get(contractId, DOC_POST, postId);
+    if (!document) return null;
+    return docToObject<PostDocument>(document);
   } catch {
     return null;
   }
@@ -394,13 +483,12 @@ export async function getPostCount(
     const results = await sdk.documents.query({
       dataContractId: contractId,
       documentTypeName: DOC_POST,
-      where: [
-        ['forumId', '==', forumId],
-        ['status', '==', 'active'],
-      ],
+      where: [['forumId', '==', forumId]],
       limit: 100,
     });
-    return Array.from(results.values()).filter(Boolean).length;
+    return queryToArray<PostDocument>(results).filter(
+      (d) => d.status === 'active',
+    ).length;
   } catch {
     return 0;
   }
@@ -442,6 +530,8 @@ export async function createComment(
 
 /**
  * Get comments for a post (oldest first).
+ *
+ * Uses the `byPost` index (postId, $createdAt) and filters `status` in JS.
  */
 export async function getPostComments(
   sdk: DashSdk,
@@ -454,17 +544,14 @@ export async function getPostComments(
   const results = await sdk.documents.query({
     dataContractId: contractId,
     documentTypeName: DOC_COMMENT,
-    where: [
-      ['postId', '==', postId],
-      ['status', '==', 'active'],
-    ],
+    where: [['postId', '==', postId]],
     limit,
     orderBy: [['$createdAt', 'asc']],
   });
 
-  return Array.from(results.values())
-    .filter(Boolean)
-    .map((d) => docToObject<CommentDocument>(d));
+  return queryToArray<CommentDocument>(results).filter(
+    (d) => d.status === 'active',
+  );
 }
 
 /**
@@ -480,13 +567,12 @@ export async function getCommentCount(
     const results = await sdk.documents.query({
       dataContractId: contractId,
       documentTypeName: DOC_COMMENT,
-      where: [
-        ['postId', '==', postId],
-        ['status', '==', 'active'],
-      ],
+      where: [['postId', '==', postId]],
       limit: 100,
     });
-    return Array.from(results.values()).filter(Boolean).length;
+    return queryToArray<CommentDocument>(results).filter(
+      (d) => d.status === 'active',
+    ).length;
   } catch {
     return 0;
   }
@@ -557,6 +643,8 @@ export async function removeReaction(
 
 /**
  * Get the current user's reaction on a post (or null).
+ *
+ * Matches the unique `ownerPostReaction` index ($ownerId + postId).
  */
 export async function getUserReaction(
   sdk: DashSdk,
@@ -575,9 +663,9 @@ export async function getUserReaction(
       ],
       limit: 1,
     });
-    const docs = Array.from(results.values()).filter(Boolean);
+    const docs = queryToArray<ReactionDocument>(results);
     if (docs.length === 0) return null;
-    return docToObject<ReactionDocument>(docs[0]);
+    return docs[0];
   } catch {
     return null;
   }
@@ -599,7 +687,7 @@ export async function getReactionCount(
       where: [['postId', '==', postId]],
       limit: 100,
     });
-    return Array.from(results.values()).filter(Boolean).length;
+    return queryToArray<ReactionDocument>(results).length;
   } catch {
     return 0;
   }

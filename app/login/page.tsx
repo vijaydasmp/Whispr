@@ -12,8 +12,14 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useSession } from '@/lib/platform/session-context';
 import { createPlatformClient } from '@/lib/platform/client';
-import { loginWithKey, shortHandle } from '@/lib/platform/identity';
-import { storeKeySessionIdentity, storeTabKey } from '@/lib/platform/wallet-store';
+import { loginWithKey } from '@/lib/platform/identity';
+import {
+  storeKeySessionIdentity,
+  storeTabKey,
+  loadAnonHandle,
+  storeAnonHandle,
+} from '@/lib/platform/wallet-store';
+import { generateAnonymousHandle } from '@/lib/forum';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,17 +40,21 @@ export default function LoginPage() {
       setSdk(sdk);
 
       const result = await loginWithKey(sdk, username, privateKey);
-      
+
       // Store key session
       storeKeySessionIdentity(result.identityId);
       storeTabKey(privateKey);
       setAuthKeyWif(privateKey);
 
-      onLoginComplete(
-        result.identityId,
-        shortHandle(result.identityId, result.dpnsName),
-      );
-      
+      // Assign (or reuse) this identity's anonymous display handle. The
+      // identity still owns everything it signs; this only decides the name
+      // shown next to posts and comments.
+      const handle =
+        loadAnonHandle(result.identityId) ?? generateAnonymousHandle();
+      storeAnonHandle(result.identityId, handle);
+
+      onLoginComplete(result.identityId, handle);
+
       router.push('/forums');
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Login failed';

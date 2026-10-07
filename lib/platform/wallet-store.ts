@@ -15,6 +15,9 @@ const STORAGE_KEYS = {
   TAB_KEY: 'whispr_tab_key',
 } as const;
 
+/** Per-identity anonymous display handle, e.g. "Anonymous #7F3A". */
+const ANON_HANDLE_PREFIX = 'whispr_anon_handle:';
+
 /**
  * Check if an encrypted wallet exists in storage.
  */
@@ -99,11 +102,37 @@ export function clearTabKey(): void {
 }
 
 /**
- * Clear key session.
+ * Store key session.
  */
 export function clearKeySession(): void {
   assertClientSide('clearKeySession');
   if (typeof window === 'undefined') return;
   localStorage.removeItem(STORAGE_KEYS.KEY_SESSION_IDENTITY);
   sessionStorage.removeItem(STORAGE_KEYS.TAB_KEY);
+}
+
+// ---------------------------------------------------------------------------
+// Anonymous display handle
+// ---------------------------------------------------------------------------
+
+/**
+ * Persist the anonymous display handle chosen for an identity.
+ *
+ * The handle is only a display name — the identity still owns every document
+ * it signs — but keeping it stable across reloads means a returning user shows
+ * the same name.
+ */
+export function storeAnonHandle(identityId: string, handle: string): void {
+  assertClientSide('storeAnonHandle');
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(`${ANON_HANDLE_PREFIX}${identityId}`, handle);
+}
+
+/**
+ * Load the stored anonymous display handle for an identity, or null.
+ */
+export function loadAnonHandle(identityId: string): string | null {
+  assertClientSide('loadAnonHandle');
+  if (typeof window === 'undefined') return null;
+  return localStorage.getItem(`${ANON_HANDLE_PREFIX}${identityId}`);
 }

@@ -18,10 +18,31 @@ const KEY_CONTRACT_ID = 'whispr:platform:v1:contractid';
  * Set NEXT_PUBLIC_WHISPR_CONTRACT_ID in environment variables after deploying.
  */
 export const KNOWN_CONTRACT_ID =
-  process.env.NEXT_PUBLIC_WHISPR_CONTRACT_ID ?? '5RzTyKPkD3dsMhkmJvrPsgM7iSsyF4NHnustqAfVnkyi';
+  process.env.NEXT_PUBLIC_WHISPR_CONTRACT_ID ?? '';
 
+/**
+ * Returns the contract ID to query.
+ *
+ * Order of precedence:
+ *   1. The ID actually deployed and saved by the admin panel (localStorage).
+ *   2. A build-time default from NEXT_PUBLIC_WHISPR_CONTRACT_ID.
+ *
+ * NOTE: the build-time default must never win over a locally deployed ID.
+ * The previous version used a hard-coded placeholder as the default, which
+ * meant a freshly deployed contract was never queried and forum loading
+ * failed with a "Failed to load forums" error.
+ */
 export function getStoredContractId(): string | null {
   assertClientSide('getStoredContractId');
+
+  let stored: string | null = null;
+  try {
+    stored = localStorage.getItem(KEY_CONTRACT_ID);
+  } catch {
+    stored = null;
+  }
+  if (stored) return stored;
+
   const canonical = KNOWN_CONTRACT_ID || null;
   if (canonical) {
     try {
@@ -31,7 +52,7 @@ export function getStoredContractId(): string | null {
     }
     return canonical;
   }
-  return localStorage.getItem(KEY_CONTRACT_ID);
+  return null;
 }
 
 export function storeContractId(id: string): void {

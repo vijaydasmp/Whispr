@@ -14,6 +14,7 @@ import { getStoredContractId } from '@/lib/platform/contract';
 import {
   getForum,
   getForumPosts,
+  getForumPseudonyms,
   getMemberCount,
   getMembership,
   joinForum,
@@ -84,12 +85,17 @@ export default function ForumPage() {
         setMemberCount(count);
         setMembership(member);
 
-        // Load posts
-        const postDocs = await getForumPosts(sdk, contractId, forumId, 50);
+        // Load posts + the forum's member handles in parallel.
+        const [postDocs, pseudonyms] = await Promise.all([
+          getForumPosts(sdk, contractId, forumId, 50),
+          getForumPseudonyms(sdk, contractId, forumId),
+        ]);
         setPosts(
           postDocs.map((post) => ({
             ...post,
-            authorPseudonym: generatePseudonym(post.$ownerId, forumId),
+            authorPseudonym:
+              pseudonyms.get(post.$ownerId) ??
+              generatePseudonym(post.$ownerId, forumId),
           })),
         );
       } catch (err) {
@@ -110,7 +116,14 @@ export default function ForumPage() {
     setJoining(true);
     setError('');
     try {
-      await joinForum(sdk, contractId, session.identityId, authKeyWif, forumId);
+      await joinForum(
+        sdk,
+        contractId,
+        session.identityId,
+        authKeyWif,
+        forumId,
+        session.displayHandle ?? undefined,
+      );
       const member = await getMembership(sdk, contractId, session.identityId, forumId);
       setMembership(member);
       setMemberCount((c) => c + 1);
@@ -132,7 +145,16 @@ export default function ForumPage() {
       const revision = typeof (membership as unknown as { $revision?: bigint }).$revision === 'bigint'
         ? (membership as unknown as { $revision: bigint }).$revision
         : BigInt(1);
-      await leaveForum(sdk, contractId, session.identityId, authKeyWif, membership.$id, revision);
+      await leaveForum(
+        sdk,
+        contractId,
+        session.identityId,
+        authKeyWif,
+        membership.$id,
+        revision,
+        forumId,
+        membership.pseudonym,
+      );
       setMembership(null);
       setMemberCount((c) => Math.max(0, c - 1));
     } catch (err) {
@@ -153,12 +175,17 @@ export default function ForumPage() {
     try {
       await createPost(sdk, contractId, session.identityId, authKeyWif, forumId, newPostContent.trim());
 
-      // Reload posts
-      const postDocs = await getForumPosts(sdk, contractId, forumId, 50);
+      // Reload posts + handles.
+      const [postDocs, pseudonyms] = await Promise.all([
+        getForumPosts(sdk, contractId, forumId, 50),
+        getForumPseudonyms(sdk, contractId, forumId),
+      ]);
       setPosts(
         postDocs.map((post) => ({
           ...post,
-          authorPseudonym: generatePseudonym(post.$ownerId, forumId),
+          authorPseudonym:
+            pseudonyms.get(post.$ownerId) ??
+            generatePseudonym(post.$ownerId, forumId),
         })),
       );
       setNewPostContent('');
@@ -169,9 +196,11 @@ export default function ForumPage() {
     }
   };
 
-  const formatDate = (timestamp: number) => {
+  const formatDate = (timestamp: number | bigint) => {
+    // Dash returns $createdAt as BigInt; mixing it with a number throws.
+    const ms = typeof timestamp === 'bigint' ? Number(timestamp) : timestamp;
     const now = Date.now();
-    const diff = now - timestamp;
+    const diff = now - ms;
     const minutes = Math.floor(diff / 60000);
     const hours = Math.floor(diff / 3600000);
     const days = Math.floor(diff / 86400000);
@@ -179,7 +208,7 @@ export default function ForumPage() {
     if (minutes < 60) return `${minutes}m ago`;
     if (hours < 24) return `${hours}h ago`;
     if (days < 7) return `${days}d ago`;
-    return new Date(timestamp).toLocaleDateString();
+    return new Date(ms).toLocaleDateString();
   };
 
   if (session.status !== 'ready' || !sdk) {

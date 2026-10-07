@@ -24,9 +24,11 @@ import {
   clearWalletStore,
   loadKeySessionIdentity,
   loadTabKey,
+  loadAnonHandle,
+  storeAnonHandle,
 } from '@/lib/platform/wallet-store';
 import { createPlatformClient } from '@/lib/platform/client';
-import { resolveDpnsName, shortHandle } from '@/lib/platform/identity';
+import { generateAnonymousHandle } from '@/lib/forum';
 
 // ---------------------------------------------------------------------------
 // Context shape
@@ -78,12 +80,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         try {
           const client = await createPlatformClient();
           setSdkState(client);
-          const dpnsName = await resolveDpnsName(client, keyIdentityId);
+          // Restore (or mint) this identity's anonymous display handle.
+          const handle =
+            loadAnonHandle(keyIdentityId) ?? generateAnonymousHandle();
+          storeAnonHandle(keyIdentityId, handle);
           setAuthKeyWif(tabKey);
           setSession({
             status: 'ready',
             identityId: keyIdentityId,
-            displayHandle: shortHandle(keyIdentityId, dpnsName),
+            displayHandle: handle,
             fundingAddress: null,
             errorMessage: null,
           });
